@@ -1,18 +1,22 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v2"
+	"github.com/go-redis/redis/v8"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"regexp"
-	"sync"
-	"encoding/json"
+	"time"
 )
 
 const resultRegex = `jsonpgz\((.*?)\);`
+
+var ctx = context.Background()
 
 type Msg struct {
 	Fundcode string `json:"fundcode"`
@@ -21,80 +25,81 @@ type Msg struct {
 	GzTime string `json:"gztime"`
 }
 
-type Config struct {
-	Id []string `yaml:"id"`
-}
-
 func main() {
 	router := gin.Default()
 
-	// - No origin allowed by default
-	// - GET,POST, PUT, HEAD methods
-	// - Credentials share disabled
-	// - Preflight requests cached for 12 hours
-	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"*"}
-	// config.AllowOrigins == []string{"http://google.com", "http://facebook.com"}
-
-	router.Use(cors.New(config))
+	router.Use(cors.Default())
 
 	r := router.Group("/")
 
 	{
-		r.GET("/", func(c *gin.Context) {
-			var conf Config
-			var msgList []Msg
-			var wg sync.WaitGroup
-			file, err := ioutil.ReadFile("./config.yaml")
-			if err != nil {
-				fmt.Println(err)
-			}
-
-			err = yaml.Unmarshal(file, &conf)
-			if err != nil {
-				fmt.Println(err)
-			}
-			//fmt.Printf("%+v", conf)
-
-			for _, id := range conf.Id {
-				wg.Add(1)
-				go func(id string) {
-					bUrl := "http://fundgz.1234567.com.cn/js/" + id + ".js"
-					msg := parse(bUrl)
-					if msg.Fundcode == "" {
-						msg.Name = "Not Found"
-					}
-					msgList = append(msgList, msg)
-					wg.Done()
-				}(id)
-			}
-			wg.Wait()
-			c.JSON(http.StatusOK, msgList)
-		})
-
 		r.GET("/:id", func(c *gin.Context) {
 			id := c.Param("id")
-			bUrl := "http://fundgz.1234567.com.cn/js/" + id + ".js"
-			msg := parse(bUrl)
-			if msg.Fundcode == "" {
-				msg.Name = "Not Found"
-				c.JSON(http.StatusOK, msg)
+
+			result := getCache(id)
+
+			if result != "" {
+				c.String(http.StatusOK, result)
+
 				return
 			}
-			c.JSON(http.StatusOK, msg)
+
+			msg := parse("http://fundgz.1234567.com.cn/js/" + id + ".js")
+
+			if msg.Fundcode == "" {
+				msg.Name = "Not Found"
+				msg.Gszzl = "0"
+			}
+
+			result = format(msg)
+
+			setCache(id, result)
+
+			c.String(http.StatusOK, result)
 		})
 	}
 
 	router.Run(":8000")
 }
 
+func getCache(id string) string {
+	rdb := redis.NewClient(&redis.Options{
+		Addr: os.Getenv("REDIS_HOST") + ":" + os.Getenv("REDIS_PORT"),
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB: 0,
+	})
+
+	val, err := rdb.Get(ctx, id).Result()
+
+	if err == redis.Nil {
+		return ""
+	}
+
+	return val
+}
+
+func setCache(id string, context string) {
+	rdb := redis.NewClient(&redis.Options{
+		Addr: os.Getenv("REDIS_HOST") + ":" + os.Getenv("REDIS_PORT"),
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB: 0,
+	})
+
+	t6 := (60 - time.Now().Second()) * 1e9
+
+	rdb.Set(ctx, id, context, time.Duration(t6))
+}
+
 func parse(bUrl string) Msg {
 	result := Msg{}
 
 	client := http.Client{}
+
 	request, err := http.NewRequest("GET", bUrl, nil)
 	if err != nil {
 		fmt.Println(err)
+
+		return result
 	}
 
 	request.Header.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8")
@@ -106,13 +111,16 @@ func parse(bUrl string) Msg {
 	response, err := client.Do(request)
 	if err != nil {
 		fmt.Println(err)
+
 		return result
 	}
+
 	defer response.Body.Close()
 
 	respBody, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		fmt.Println(err)
+
 		return result
 	}
 
@@ -121,18 +129,26 @@ func parse(bUrl string) Msg {
 	err = json.Unmarshal([]byte(s), &result)
 	if err != nil {
 		fmt.Println("Umarshal failed:", err)
+
 		return result
 	}
 
 	return result
 }
 
+func format(msg Msg) string {
+	return msg.Name +
+		"：" + msg.Gszzl +
+		"\n"
+}
+
 func reg(regexString string, content []byte) string {
 	Reg := regexp.MustCompile(regexString)
 	match := Reg.FindAllSubmatch(content, -1)
+
 	for _, m := range match {
-		//fmt.Println("基金ID: ", string(m[1]))
 		return string(m[1])
 	}
+
 	return ""
 }

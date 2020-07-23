@@ -1,10 +1,14 @@
-FROM alpine:3.7
+FROM golang:alpine
 
-WORKDIR /go/bin/
+ENV GO111MODULE=on \
+GOPROXY=https://goproxy.io
 
-COPY ./app .
-COPY ./config.yaml .
+WORKDIR /app
 
-EXPOSE 8080
+COPY . /app
 
-CMD ["./app"]
+RUN go build -o eastmoney main.go
+
+EXPOSE 8000
+
+CMD ["./eastmoney"]
