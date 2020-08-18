@@ -33,8 +33,9 @@ func main() {
 	r := router.Group("/")
 
 	{
-		r.GET("/:id", func(c *gin.Context) {
+		r.GET("/:id/:abbreviation", func(c *gin.Context) {
 			id := c.Param("id")
+			abbreviation := c.Param("abbreviation")
 
 			result := getCache(id)
 
@@ -45,6 +46,10 @@ func main() {
 			}
 
 			msg := parse("http://fundgz.1234567.com.cn/js/" + id + ".js")
+
+			if abbreviation != "" {
+				msg.Name = abbreviation
+			}
 
 			if msg.Fundcode == "" {
 				msg.Name = "Not Found"
