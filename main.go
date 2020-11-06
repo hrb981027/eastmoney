@@ -25,7 +25,15 @@ type Msg struct {
 	GzTime string `json:"gztime"`
 }
 
+var rdb *redis.Client
+
 func main() {
+	rdb = redis.NewClient(&redis.Options{
+		Addr: os.Getenv("REDIS_HOST") + ":" + os.Getenv("REDIS_PORT"),
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB: 0,
+	})
+
 	router := gin.Default()
 
 	router.Use(cors.Default())
@@ -68,12 +76,6 @@ func main() {
 }
 
 func getCache(id string) string {
-	rdb := redis.NewClient(&redis.Options{
-		Addr: os.Getenv("REDIS_HOST") + ":" + os.Getenv("REDIS_PORT"),
-		Password: os.Getenv("REDIS_PASSWORD"),
-		DB: 0,
-	})
-
 	val, err := rdb.Get(ctx, id).Result()
 
 	if err == redis.Nil {
@@ -84,12 +86,6 @@ func getCache(id string) string {
 }
 
 func setCache(id string, context string) {
-	rdb := redis.NewClient(&redis.Options{
-		Addr: os.Getenv("REDIS_HOST") + ":" + os.Getenv("REDIS_PORT"),
-		Password: os.Getenv("REDIS_PASSWORD"),
-		DB: 0,
-	})
-
 	t6 := (60 - time.Now().Second()) * 1e9
 
 	rdb.Set(ctx, id, context, time.Duration(t6))
